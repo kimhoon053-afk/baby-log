@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "149910050703",
+    "project_id": "baby-log-3e8b8",
+    "storage_bucket": "baby-log-3e8b8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:149910050703:android:c07c347996c3c12eb35dfa",
+        "android_client_info": {
+          "package_name": "com.babylog.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBgX3byOSr5L6MqLppQXIFuwRYeQGhzO3A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
