@@ -46,6 +46,12 @@ as $$
   select exists (select 1 from public.members where baby_id = b and user_id = auth.uid());
 $$;
 
+-- 로그인한 사용자가 표를 쓸 수 있게 허락 (실제로 어떤 줄을 볼 수 있는지는 아래 규칙이 정해요)
+grant usage on schema public to authenticated;
+grant select, update on public.babies to authenticated;
+grant select, delete on public.members to authenticated;
+grant select, insert, update, delete on public.logs to authenticated;
+
 -- 가족만 볼 수 있고, 가족만 쓸 수 있게 잠금
 alter table public.babies enable row level security;
 alter table public.members enable row level security;
