@@ -38,6 +38,12 @@
           "color": "#E8763A"
         }
       ]
-    ]
+    ],
+    "owner": "gimhk",
+    "extra": {
+      "eas": {
+        "projectId": "a4586f14-e753-4368-8d56-d1ad1324c945"
+      }
+    }
   }
 }
