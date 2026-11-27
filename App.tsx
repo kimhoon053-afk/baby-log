@@ -1,426 +1,150 @@
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Alert,
-  Modal,
-  Pressable,
-  SectionList,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import * as Notifications from 'expo-notifications';
 
 import {
-  agoLabel,
-  dayKey,
-  dayTitle,
-  entryEmoji,
-  entryTitle,
-  sleepingFor,
-  timeLabel,
-} from './src/format';
-import { localStore, newId } from './src/storage';
-import type { DiaperType, FeedType, LogEntry } from './src/types';
+  DEFAULT_REMINDER,
+  ensurePermission,
+  loadReminder,
+  rescheduleFeedReminder,
+  saveReminder,
+  type ReminderSettings,
+} from './src/reminders';
+import AlarmScreen from './src/screens/AlarmScreen';
+import LogScreen from './src/screens/LogScreen';
+import StatsScreen from './src/screens/StatsScreen';
+import { BABY_ID, store } from './src/store';
+import { C } from './src/theme';
+import type { LogEntry } from './src/types';
 
-// 지금은 아기 한 명, 이 기기 한 대만 씁니다.
-const BABY_ID = 'baby-1';
-const ME = 'me';
-const store = localStore;
-
-const C = {
-  bg: '#FFF9F4',
-  card: '#FFFFFF',
-  text: '#2B2A33',
-  sub: '#7A7787',
-  line: '#EFE8E1',
-  feed: '#FFE3D3',
-  feedDeep: '#E8763A',
-  diaper: '#DCEBFF',
-  diaperDeep: '#3A7BD5',
-  sleep: '#E7E1FF',
-  sleepDeep: '#6B55D9',
-};
+type Tab = 'log' | 'stats' | 'alarm';
 
 export default function App() {
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style="dark" />
-        <LogScreen />
+        <Main />
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
-function LogScreen() {
+function Main() {
+  const [tab, setTab] = useState<Tab>('log');
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [formulaOpen, setFormulaOpen] = useState(false);
-  const [formulaMl, setFormulaMl] = useState(120);
-  const [toast, setToast] = useState<{ text: string; undoId?: string } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [reminder, setReminder] = useState<ReminderSettings>(DEFAULT_REMINDER);
+  const [reminderLoaded, setReminderLoaded] = useState(false);
+  const [permission, setPermission] = useState<'granted' | 'denied' | 'unknown'>('unknown');
 
   const reload = useCallback(async () => {
     setEntries(await store.list(BABY_ID));
   }, []);
 
+  const askPermission = useCallback(async () => {
+    const ok = await ensurePermission();
+    setPermission(ok ? 'granted' : 'denied');
+  }, []);
+
   useEffect(() => {
     reload();
+    loadReminder().then((s) => {
+      setReminder(s);
+      setReminderLoaded(true);
+      if (s.enabled) askPermission();
+    });
     const t = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(t);
-  }, [reload]);
+  }, [reload, askPermission]);
 
-  // 마지막으로 먹인 분유 양을 기억해 두었다가 다음에 기본값으로 씁니다.
+  // 마지막 수유나 알림 설정이 바뀌면 알림 예약을 다시 맞춥니다.
+  const lastFeedIso = entries.find((e) => e.kind === 'feed')?.startAt;
   useEffect(() => {
-    const lastFormula = entries.find((e) => e.subtype === 'formula');
-    if (lastFormula?.amountMl) setFormulaMl(lastFormula.amountMl);
-  }, [entries]);
+    if (!reminderLoaded || Platform.OS === 'web') return;
+    rescheduleFeedReminder(lastFeedIso, reminder).catch(() => {});
+  }, [lastFeedIso, reminder, reminderLoaded, permission]);
 
-  const showToast = (text: string, undoId?: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text, undoId });
-    toastTimer.current = setTimeout(() => setToast(null), 5000);
+  // 알림을 눌러 앱을 열면 기록 화면으로 갑니다.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = Notifications.addNotificationResponseReceivedListener(() => setTab('log'));
+    return () => sub.remove();
+  }, []);
+
+  const changeReminder = (s: ReminderSettings) => {
+    setReminder(s);
+    saveReminder(s);
   };
-
-  const add = async (partial: Pick<LogEntry, 'kind' | 'subtype'> & Partial<LogEntry>, label: string) => {
-    const t = new Date().toISOString();
-    const entry: LogEntry = {
-      id: newId(),
-      babyId: BABY_ID,
-      startAt: t,
-      createdAt: t,
-      updatedAt: t,
-      createdBy: ME,
-      ...partial,
-    };
-    await store.save(entry);
-    setNow(Date.now());
-    await reload();
-    showToast(`${label} 기록했어요`, entry.id);
-  };
-
-  const undo = async (id: string) => {
-    await store.remove(id);
-    setToast(null);
-    await reload();
-  };
-
-  const feed = (subtype: FeedType, label: string, amountMl?: number) =>
-    add({ kind: 'feed', subtype, amountMl }, label);
-  const diaper = (subtype: DiaperType, label: string) => add({ kind: 'diaper', subtype }, label);
-
-  const sleeping = entries.find((e) => e.kind === 'sleep' && !e.endAt);
-
-  const toggleSleep = async () => {
-    if (sleeping) {
-      const t = new Date().toISOString();
-      await store.save({ ...sleeping, endAt: t, updatedAt: t });
-      setNow(Date.now());
-      await reload();
-      showToast('깼어요 기록했어요');
-    } else {
-      await add({ kind: 'sleep', subtype: 'sleep' }, '잠들었어요');
-    }
-  };
-
-  const confirmDelete = (e: LogEntry) => {
-    Alert.alert('이 기록을 지울까요?', `${timeLabel(e.startAt)} ${entryTitle(e, now)}`, [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '지우기',
-        style: 'destructive',
-        onPress: async () => {
-          await store.remove(e.id);
-          await reload();
-        },
-      },
-    ]);
-  };
-
-  const lastFeed = entries.find((e) => e.kind === 'feed');
-  const lastDiaper = entries.find((e) => e.kind === 'diaper');
-
-  const sections = useMemo(() => {
-    const map = new Map<string, LogEntry[]>();
-    for (const e of entries) {
-      const k = dayKey(e.startAt);
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(e);
-    }
-    return [...map.values()].map((data) => ({ title: dayTitle(data[0].startAt, now), data }));
-  }, [entries, now]);
-
-  const header = (
-    <View>
-      <Text style={styles.appTitle}>아기 기록</Text>
-
-      <View style={styles.summaryRow}>
-        <SummaryBox
-          label="마지막 수유"
-          value={lastFeed ? agoLabel(lastFeed.startAt, now) : '아직 없어요'}
-          color={C.feedDeep}
-        />
-        <SummaryBox
-          label="마지막 기저귀"
-          value={lastDiaper ? agoLabel(lastDiaper.startAt, now) : '아직 없어요'}
-          color={C.diaperDeep}
-        />
-      </View>
-
-      <Text style={styles.groupTitle}>수유</Text>
-      <View style={styles.row}>
-        <BigButton emoji="🤱" label="모유 왼쪽" bg={C.feed} onPress={() => feed('breast_left', '모유 왼쪽')} />
-        <BigButton emoji="🤱" label="모유 오른쪽" bg={C.feed} onPress={() => feed('breast_right', '모유 오른쪽')} />
-        <BigButton emoji="🍼" label="분유" bg={C.feed} onPress={() => setFormulaOpen(true)} />
-      </View>
-
-      <Text style={styles.groupTitle}>기저귀</Text>
-      <View style={styles.row}>
-        <BigButton emoji="💧" label="소변" bg={C.diaper} onPress={() => diaper('pee', '소변')} />
-        <BigButton emoji="💩" label="대변" bg={C.diaper} onPress={() => diaper('poop', '대변')} />
-      </View>
-
-      <Text style={styles.groupTitle}>수면</Text>
-      <View style={styles.row}>
-        <BigButton
-          emoji={sleeping ? '🌞' : '😴'}
-          label={sleeping ? `깼어요\n(자는 중 · ${sleepingFor(sleeping.startAt, now)})` : '잠들었어요'}
-          bg={sleeping ? C.sleepDeep : C.sleep}
-          fg={sleeping ? '#fff' : C.text}
-          onPress={toggleSleep}
-        />
-      </View>
-
-      <Text style={[styles.groupTitle, { marginTop: 28 }]}>기록</Text>
-      {entries.length === 0 && (
-        <Text style={styles.empty}>위 버튼을 누르면 여기에 기록이 쌓여요.</Text>
-      )}
-    </View>
-  );
 
   return (
     <View style={{ flex: 1 }}>
-      <SectionList
-        sections={sections}
-        keyExtractor={(e) => e.id}
-        ListHeaderComponent={header}
-        contentContainerStyle={styles.content}
-        stickySectionHeadersEnabled={false}
-        renderSectionHeader={({ section }) => <Text style={styles.dayTitle}>{section.title}</Text>}
-        renderItem={({ item }) => (
-          <Pressable onLongPress={() => confirmDelete(item)} style={styles.item}>
-            <Text style={styles.itemTime}>{timeLabel(item.startAt)}</Text>
-            <Text style={styles.itemEmoji}>{entryEmoji(item)}</Text>
-            <Text style={styles.itemTitle}>{entryTitle(item, now)}</Text>
-          </Pressable>
+      <View style={{ flex: 1 }}>
+        {tab === 'log' && (
+          <LogScreen
+            entries={entries}
+            reload={reload}
+            now={now}
+            setNow={setNow}
+            reminder={reminder}
+            onOpenAlarm={() => setTab('alarm')}
+          />
         )}
-        ListFooterComponent={
-          entries.length > 0 ? <Text style={styles.hint}>기록을 길게 누르면 지울 수 있어요.</Text> : undefined
-        }
-      />
+        {tab === 'stats' && <StatsScreen entries={entries} now={now} />}
+        {tab === 'alarm' && (
+          <AlarmScreen
+            settings={reminder}
+            onChange={changeReminder}
+            permission={permission}
+            onAskPermission={askPermission}
+            lastFeedIso={lastFeedIso}
+            now={now}
+          />
+        )}
+      </View>
 
-      {toast && (
-        <View style={styles.toast}>
-          <Text style={styles.toastText}>{toast.text}</Text>
-          {toast.undoId && (
-            <Pressable onPress={() => undo(toast.undoId!)} hitSlop={12}>
-              <Text style={styles.toastUndo}>되돌리기</Text>
-            </Pressable>
-          )}
-        </View>
-      )}
-
-      <FormulaModal
-        visible={formulaOpen}
-        ml={formulaMl}
-        setMl={setFormulaMl}
-        onCancel={() => setFormulaOpen(false)}
-        onSave={() => {
-          setFormulaOpen(false);
-          feed('formula', `분유 ${formulaMl}ml`, formulaMl);
-        }}
-      />
+      <View style={styles.tabBar}>
+        <TabButton icon="📝" label="기록" active={tab === 'log'} onPress={() => setTab('log')} />
+        <TabButton icon="📊" label="통계" active={tab === 'stats'} onPress={() => setTab('stats')} />
+        <TabButton icon="⏰" label="알림" active={tab === 'alarm'} onPress={() => setTab('alarm')} />
+      </View>
     </View>
   );
 }
 
-function SummaryBox({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <View style={styles.summaryBox}>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={[styles.summaryValue, { color }]}>{value}</Text>
-    </View>
-  );
-}
-
-function BigButton({
-  emoji,
+function TabButton({
+  icon,
   label,
-  bg,
-  fg = C.text,
+  active,
   onPress,
 }: {
-  emoji: string;
+  icon: string;
   label: string;
-  bg: string;
-  fg?: string;
+  active: boolean;
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.bigBtn, { backgroundColor: bg, opacity: pressed ? 0.7 : 1 }]}
-    >
-      <Text style={styles.bigEmoji}>{emoji}</Text>
-      <Text style={[styles.bigLabel, { color: fg }]}>{label}</Text>
+    <Pressable onPress={onPress} style={styles.tabBtn}>
+      <Text style={[styles.tabIcon, !active && { opacity: 0.45 }]}>{icon}</Text>
+      <Text style={[styles.tabLabel, active && styles.tabLabelOn]}>{label}</Text>
     </Pressable>
-  );
-}
-
-const PRESETS = [60, 80, 100, 120, 150, 180];
-
-function FormulaModal({
-  visible,
-  ml,
-  setMl,
-  onCancel,
-  onSave,
-}: {
-  visible: boolean;
-  ml: number;
-  setMl: (n: number) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel} />
-      <View style={styles.sheet}>
-        <Text style={styles.sheetTitle}>🍼 분유 얼마나 먹었나요?</Text>
-        <View style={styles.stepper}>
-          <Pressable style={styles.stepBtn} onPress={() => setMl(Math.max(10, ml - 10))}>
-            <Text style={styles.stepText}>−</Text>
-          </Pressable>
-          <Text style={styles.mlText}>{ml}ml</Text>
-          <Pressable style={styles.stepBtn} onPress={() => setMl(Math.min(400, ml + 10))}>
-            <Text style={styles.stepText}>+</Text>
-          </Pressable>
-        </View>
-        <View style={styles.presets}>
-          {PRESETS.map((p) => (
-            <Pressable
-              key={p}
-              onPress={() => setMl(p)}
-              style={[styles.preset, p === ml && { backgroundColor: C.feedDeep, borderColor: C.feedDeep }]}
-            >
-              <Text style={[styles.presetText, p === ml && { color: '#fff' }]}>{p}</Text>
-            </Pressable>
-          ))}
-        </View>
-        <View style={styles.sheetActions}>
-          <Pressable style={[styles.actionBtn, { backgroundColor: C.line }]} onPress={onCancel}>
-            <Text style={styles.actionText}>취소</Text>
-          </Pressable>
-          <Pressable style={[styles.actionBtn, { backgroundColor: C.feedDeep, flex: 2 }]} onPress={onSave}>
-            <Text style={[styles.actionText, { color: '#fff' }]}>기록하기</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
-  content: { padding: 16, paddingBottom: 120 },
-  appTitle: { fontSize: 26, fontWeight: '800', color: C.text, marginTop: 4, marginBottom: 14 },
-  summaryRow: { flexDirection: 'row', gap: 10, marginBottom: 8 },
-  summaryBox: {
-    flex: 1,
-    backgroundColor: C.card,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: C.line,
-  },
-  summaryLabel: { fontSize: 13, color: C.sub, marginBottom: 4 },
-  summaryValue: { fontSize: 18, fontWeight: '700' },
-  groupTitle: { fontSize: 15, fontWeight: '700', color: C.sub, marginTop: 18, marginBottom: 8 },
-  row: { flexDirection: 'row', gap: 10 },
-  bigBtn: {
-    flex: 1,
-    minHeight: 92,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 12,
-  },
-  bigEmoji: { fontSize: 30, marginBottom: 6 },
-  bigLabel: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
-  empty: { color: C.sub, fontSize: 15, paddingVertical: 12 },
-  dayTitle: { fontSize: 14, fontWeight: '700', color: C.text, marginTop: 10, marginBottom: 6 },
-  item: {
+  tabBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: C.line,
     backgroundColor: C.card,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: C.line,
+    paddingTop: 6,
+    paddingBottom: 6,
   },
-  itemTime: { width: 78, fontSize: 14, color: C.sub, fontVariant: ['tabular-nums'] },
-  itemEmoji: { fontSize: 20, marginRight: 10 },
-  itemTitle: { fontSize: 16, color: C.text, fontWeight: '600', flexShrink: 1 },
-  hint: { textAlign: 'center', color: C.sub, fontSize: 13, marginTop: 8 },
-  toast: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 32,
-    backgroundColor: C.text,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  toastText: { color: '#fff', fontSize: 15, flexShrink: 1 },
-  toastUndo: { color: '#FFC79E', fontSize: 15, fontWeight: '700', marginLeft: 12 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: {
-    backgroundColor: C.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 36,
-  },
-  sheetTitle: { fontSize: 19, fontWeight: '800', color: C.text, textAlign: 'center' },
-  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginVertical: 18 },
-  stepBtn: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: C.feed,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepText: { fontSize: 30, fontWeight: '700', color: C.feedDeep },
-  mlText: { fontSize: 36, fontWeight: '800', color: C.text, minWidth: 150, textAlign: 'center' },
-  presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
-  preset: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: C.line,
-  },
-  presetText: { fontSize: 15, fontWeight: '600', color: C.text },
-  sheetActions: { flexDirection: 'row', gap: 10, marginTop: 22 },
-  actionBtn: { flex: 1, paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
-  actionText: { fontSize: 17, fontWeight: '700', color: C.text },
+  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  tabIcon: { fontSize: 22 },
+  tabLabel: { fontSize: 12, color: C.sub, marginTop: 2, fontWeight: '600' },
+  tabLabelOn: { color: C.text, fontWeight: '800' },
 });
