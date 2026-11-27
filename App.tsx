@@ -14,6 +14,10 @@ import {
 } from './src/reminders';
 import { syncPushDevice } from './src/push';
 import AlarmScreen from './src/screens/AlarmScreen';
+import Onboarding from './src/components/Onboarding';
+import Paywall from './src/components/Paywall';
+import { PremiumProvider } from './src/premium';
+import GrowthScreen from './src/screens/GrowthScreen';
 import { DEFAULT_FEEDBACK, loadFeedback, saveFeedback, type ButtonFeedback } from './src/sounds';
 import LogScreen from './src/screens/LogScreen';
 import StatsScreen from './src/screens/StatsScreen';
@@ -25,14 +29,16 @@ import { LOCAL_BABY_ID, storeFor } from './src/store';
 import { C } from './src/theme';
 import type { LogEntry } from './src/types';
 
-type Tab = 'log' | 'stats' | 'alarm' | 'family';
+type Tab = 'log' | 'stats' | 'growth' | 'alarm' | 'family';
 
 export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style="dark" />
-        <Main />
+        <PremiumProvider>
+          <Main />
+        </PremiumProvider>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -148,7 +154,10 @@ function Main() {
             feedback={feedback}
           />
         )}
-        {tab === 'stats' && <StatsScreen entries={entries} now={now} />}
+        {tab === 'stats' && (
+          <StatsScreen entries={entries} now={now} babyName={family ? family.babyName : '우리 아기'} />
+        )}
+        {tab === 'growth' && <GrowthScreen now={now} babyName={family ? family.babyName : '아기 기록'} />}
         {tab === 'alarm' && (
           <AlarmScreen
             settings={reminder}
@@ -180,9 +189,13 @@ function Main() {
       <View style={styles.tabBar}>
         <TabButton icon="📝" label="기록" active={tab === 'log'} onPress={() => setTab('log')} />
         <TabButton icon="📊" label="통계" active={tab === 'stats'} onPress={() => setTab('stats')} />
+        <TabButton icon="📏" label="성장" active={tab === 'growth'} onPress={() => setTab('growth')} />
         <TabButton icon="⏰" label="알림" active={tab === 'alarm'} onPress={() => setTab('alarm')} />
         <TabButton icon="👨‍👩‍👧" label="가족" active={tab === 'family'} onPress={() => setTab('family')} />
       </View>
+
+      <Paywall />
+      <Onboarding onOpenFamily={() => setTab('family')} />
     </View>
   );
 }

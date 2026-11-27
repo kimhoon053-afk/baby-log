@@ -38,7 +38,8 @@
         {
           "color": "#E8763A"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "owner": "gimhk",
     "extra": {
