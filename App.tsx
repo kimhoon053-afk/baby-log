@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 
@@ -15,11 +15,15 @@ import {
 import AlarmScreen from './src/screens/AlarmScreen';
 import LogScreen from './src/screens/LogScreen';
 import StatsScreen from './src/screens/StatsScreen';
-import { BABY_ID, store } from './src/store';
+import { subscribeLogs } from './src/cloudStore';
+import { loadFamily, type Family } from './src/family';
+import FamilyScreen from './src/screens/FamilyScreen';
+import { localStore } from './src/storage';
+import { LOCAL_BABY_ID, storeFor } from './src/store';
 import { C } from './src/theme';
 import type { LogEntry } from './src/types';
 
-type Tab = 'log' | 'stats' | 'alarm';
+type Tab = 'log' | 'stats' | 'alarm' | 'family';
 
 export default function App() {
   return (
@@ -40,9 +44,44 @@ function Main() {
   const [reminderLoaded, setReminderLoaded] = useState(false);
   const [permission, setPermission] = useState<'granted' | 'denied' | 'unknown'>('unknown');
 
+  const [family, setFamily] = useState<Family | null>(null);
+  const [familyLoaded, setFamilyLoaded] = useState(false);
+  const ctx = useMemo(() => storeFor(family), [family]);
+
   const reload = useCallback(async () => {
-    setEntries(await store.list(BABY_ID));
+    try {
+      setEntries(await ctx.store.list(ctx.babyId));
+    } catch {
+      // 인터넷이 끊긴 경우 등: 지금 보이는 기록을 그대로 둡니다.
+    }
+  }, [ctx]);
+
+  const loadLocalEntries = useCallback(() => localStore.list(LOCAL_BABY_ID), []);
+
+  useEffect(() => {
+    loadFamily().then((f) => {
+      setFamily(f);
+      setFamilyLoaded(true);
+    });
   }, []);
+
+  // 저장소가 바뀌면 (혼자 ↔ 가족) 기록을 다시 불러오고,
+  // 가족 공유 중이면 다른 가족의 기록 변화를 실시간으로 받습니다.
+  useEffect(() => {
+    if (!familyLoaded) return;
+    reload();
+    const unsub = family ? subscribeLogs(family.babyId, () => reload()) : () => {};
+    const appSub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') {
+        setNow(Date.now());
+        reload();
+      }
+    });
+    return () => {
+      unsub();
+      appSub.remove();
+    };
+  }, [family, familyLoaded, reload]);
 
   const askPermission = useCallback(async () => {
     const ok = await ensurePermission();
@@ -50,7 +89,6 @@ function Main() {
   }, []);
 
   useEffect(() => {
-    reload();
     loadReminder().then((s) => {
       setReminder(s);
       setReminderLoaded(true);
@@ -58,7 +96,7 @@ function Main() {
     });
     const t = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(t);
-  }, [reload, askPermission]);
+  }, [askPermission]);
 
   // 마지막 수유나 알림 설정이 바뀌면 알림 예약을 다시 맞춥니다.
   const lastFeedIso = entries.find((e) => e.kind === 'feed')?.startAt;
@@ -90,6 +128,8 @@ function Main() {
             setNow={setNow}
             reminder={reminder}
             onOpenAlarm={() => setTab('alarm')}
+            ctx={ctx}
+            title={family ? `${family.babyName} 기록` : '아기 기록'}
           />
         )}
         {tab === 'stats' && <StatsScreen entries={entries} now={now} />}
@@ -103,12 +143,24 @@ function Main() {
             now={now}
           />
         )}
+        {tab === 'family' && (
+          <FamilyScreen
+            family={family}
+            onFamilyChange={(f) => {
+              setEntries([]);
+              setFamily(f);
+              if (f) setTab('log');
+            }}
+            loadLocalEntries={loadLocalEntries}
+          />
+        )}
       </View>
 
       <View style={styles.tabBar}>
         <TabButton icon="📝" label="기록" active={tab === 'log'} onPress={() => setTab('log')} />
         <TabButton icon="📊" label="통계" active={tab === 'stats'} onPress={() => setTab('stats')} />
         <TabButton icon="⏰" label="알림" active={tab === 'alarm'} onPress={() => setTab('alarm')} />
+        <TabButton icon="👨‍👩‍👧" label="가족" active={tab === 'family'} onPress={() => setTab('family')} />
       </View>
     </View>
   );

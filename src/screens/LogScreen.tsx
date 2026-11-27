@@ -12,7 +12,7 @@ import {
   timeLabel,
 } from '../format';
 import { nextFeedAt, type ReminderSettings } from '../reminders';
-import { BABY_ID, ME, store } from '../store';
+import type { StoreContext } from '../store';
 import { newId } from '../storage';
 import { C } from '../theme';
 import type { DiaperType, FeedType, LogEntry } from '../types';
@@ -24,9 +24,12 @@ type Props = {
   setNow: (n: number) => void;
   reminder: ReminderSettings;
   onOpenAlarm: () => void;
+  ctx: StoreContext;
+  title: string;
 };
 
-export default function LogScreen({ entries, reload, now, setNow, reminder, onOpenAlarm }: Props) {
+export default function LogScreen({ entries, reload, now, setNow, reminder, onOpenAlarm, ctx, title }: Props) {
+  const { store } = ctx;
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaMl, setFormulaMl] = useState(120);
   const [toast, setToast] = useState<{ text: string; undoId?: string } | null>(null);
@@ -48,23 +51,34 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
     const t = new Date().toISOString();
     const entry: LogEntry = {
       id: newId(),
-      babyId: BABY_ID,
+      babyId: ctx.babyId,
       startAt: t,
       createdAt: t,
       updatedAt: t,
-      createdBy: ME,
+      createdBy: ctx.me,
+      createdByName: ctx.myName,
       ...partial,
     };
-    await store.save(entry);
+    if (!(await attempt(() => store.save(entry)))) return;
     setNow(Date.now());
-    await reload();
     showToast(`${label} 기록했어요`, entry.id);
   };
 
+  // 저장·삭제를 시도하고, 실패하면 (주로 인터넷 문제) 알려 줍니다.
+  const attempt = async (fn: () => Promise<void>): Promise<boolean> => {
+    try {
+      await fn();
+      await reload().catch(() => {});
+      return true;
+    } catch {
+      showToast('저장하지 못했어요. 인터넷 연결을 확인해 주세요.');
+      return false;
+    }
+  };
+
   const undo = async (id: string) => {
-    await store.remove(id);
     setToast(null);
-    await reload();
+    await attempt(() => store.remove(id));
   };
 
   const feed = (subtype: FeedType, label: string, amountMl?: number) =>
@@ -76,9 +90,8 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
   const toggleSleep = async () => {
     if (sleeping) {
       const t = new Date().toISOString();
-      await store.save({ ...sleeping, endAt: t, updatedAt: t });
+      if (!(await attempt(() => store.save({ ...sleeping, endAt: t, updatedAt: t })))) return;
       setNow(Date.now());
-      await reload();
       showToast('깼어요 기록했어요');
     } else {
       await add({ kind: 'sleep', subtype: 'sleep' }, '잠들었어요');
@@ -92,8 +105,7 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
         text: '지우기',
         style: 'destructive',
         onPress: async () => {
-          await store.remove(e.id);
-          await reload();
+          await attempt(() => store.remove(e.id));
         },
       },
     ]);
@@ -114,7 +126,7 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
 
   const header = (
     <View>
-      <Text style={styles.appTitle}>아기 기록</Text>
+      <Text style={styles.appTitle}>{title}</Text>
 
       <NextFeedCard lastFeedIso={lastFeed?.startAt} reminder={reminder} now={now} onPress={onOpenAlarm} />
 
@@ -176,6 +188,7 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
             <Text style={styles.itemTime}>{timeLabel(item.startAt)}</Text>
             <Text style={styles.itemEmoji}>{entryEmoji(item)}</Text>
             <Text style={styles.itemTitle}>{entryTitle(item, now)}</Text>
+            {item.createdByName ? <Text style={styles.itemWho}>{item.createdByName}</Text> : null}
           </Pressable>
         )}
         ListFooterComponent={
@@ -391,6 +404,7 @@ const styles = StyleSheet.create({
   },
   itemTime: { width: 78, fontSize: 14, color: C.sub, fontVariant: ['tabular-nums'] },
   itemEmoji: { fontSize: 20, marginRight: 10 },
+  itemWho: { marginLeft: 'auto', paddingLeft: 8, fontSize: 13, color: C.sub },
   itemTitle: { fontSize: 16, color: C.text, fontWeight: '600', flexShrink: 1 },
   hint: { textAlign: 'center', color: C.sub, fontSize: 13, marginTop: 8 },
   toast: {

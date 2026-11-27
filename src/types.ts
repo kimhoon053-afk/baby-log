@@ -21,6 +21,8 @@ export type LogEntry = {
   endAt?: string;
   createdAt: string;
   updatedAt: string;
-  /** 기록한 사람. 지금은 이 기기 하나뿐이라 'me' 입니다. */
+  /** 기록한 사람. 혼자 쓸 때는 'me', 가족 공유 중에는 사용자 id 입니다. */
   createdBy: string;
+  /** 기록한 사람 호칭 (엄마, 아빠 등). 가족 공유 중에만 있어요. */
+  createdByName?: string;
 };
