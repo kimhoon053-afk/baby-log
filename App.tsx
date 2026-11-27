@@ -36,9 +36,7 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style="dark" />
-        <PremiumProvider>
-          <Main />
-        </PremiumProvider>
+        <Main />
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -139,6 +137,7 @@ function Main() {
   };
 
   return (
+    <PremiumProvider family={family}>
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
         {tab === 'log' && (
@@ -197,6 +196,7 @@ function Main() {
       <Paywall />
       <Onboarding onOpenFamily={() => setTab('family')} />
     </View>
+    </PremiumProvider>
   );
 }
 

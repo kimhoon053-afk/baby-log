@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import Purchases, { PACKAGE_TYPE, type PurchasesPackage } from 'react-native-purchases';
 
 import { PREMIUM_ENTITLEMENT, REVENUECAT_ANDROID_KEY } from './config';
+import { fetchFamilyPremium, setFamilyPremium, type Family, type FamilyPremium } from './family';
 
 // 프리미엄(유료 구독) 상태를 앱 전체에 알려 주는 곳입니다.
 // - 결제 키가 있으면: 구글 플레이 정기 구독(RevenueCat)으로 확인해요.
@@ -29,7 +30,12 @@ const SAMPLE_PLANS: Plan[] = [
 ];
 
 type PremiumState = {
+  /** 내가 구독했거나, 같은 가족 누군가가 구독했으면 true */
   isPremium: boolean;
+  /** 내가 직접 구독 중인지 */
+  ownPremium: boolean;
+  /** 가족 구독 정보 (가족 공유 중일 때만) */
+  familyPremium: FamilyPremium | null;
   plans: Plan[];
   paywallOpen: boolean;
   /** 어떤 기능을 보려다 결제 화면이 열렸는지 (안내 문구에 써요) */
@@ -45,20 +51,34 @@ const Ctx = createContext<PremiumState | null>(null);
 
 let configured = false;
 
-export function PremiumProvider({ children }: { children: ReactNode }) {
-  const [isPremium, setPremium] = useState(false);
+type Info = { entitlements: { active: Record<string, { expirationDate: string | null }> } };
+
+const FAR_FUTURE = '2099-12-31T00:00:00.000Z';
+
+export function PremiumProvider({ children, family }: { children: ReactNode; family: Family | null }) {
+  const [ownPremium, setPremium] = useState(false);
+  /** 내 구독이 끝나는 날 (평생/테스트는 아주 먼 날) */
+  const [ownUntil, setOwnUntil] = useState<string | null>(null);
+  const [familyPremium, setFamilyPremiumState] = useState<FamilyPremium | null>(null);
+  const [tick, setTick] = useState(0);
   const [plans, setPlans] = useState<Plan[]>(SAMPLE_PLANS);
   const [paywall, setPaywall] = useState<{ open: boolean; reason?: string }>({ open: false });
 
   useEffect(() => {
     if (TEST_MODE) {
       AsyncStorage.getItem(TEST_KEY)
-        .then((v) => setPremium(v === '1'))
+        .then((v) => {
+          setPremium(v === '1');
+          setOwnUntil(v === '1' ? FAR_FUTURE : null);
+        })
         .catch(() => {});
       return;
     }
-    const onInfo = (info: { entitlements: { active: Record<string, unknown> } }) =>
-      setPremium(!!info.entitlements.active[PREMIUM_ENTITLEMENT]);
+    const onInfo = (info: Info) => {
+      const ent = info.entitlements.active[PREMIUM_ENTITLEMENT];
+      setPremium(!!ent);
+      setOwnUntil(ent ? (ent.expirationDate ?? FAR_FUTURE) : null);
+    };
     try {
       if (!configured) {
         Purchases.configure({ apiKey: REVENUECAT_ANDROID_KEY });
@@ -110,10 +130,42 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setTestPremium = useCallback((on: boolean) => {
-    setPremium(on);
-    AsyncStorage.setItem(TEST_KEY, on ? '1' : '0').catch(() => {});
-  }, []);
+  // 가족 공유 중이면 가족의 구독 정보를 불러와요. (앱으로 돌아올 때마다 다시 확인)
+  useEffect(() => {
+    if (!family) {
+      setFamilyPremiumState(null);
+      return;
+    }
+    let alive = true;
+    const load = () =>
+      fetchFamilyPremium(family.babyId).then((p) => {
+        if (alive) setFamilyPremiumState(p);
+      });
+    load();
+    const sub = AppState.addEventListener('change', (st) => st === 'active' && load());
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, [family, tick]);
+
+  // 내가 구독 중이면 가족 모두가 쓸 수 있게 가족 정보에 적어 둬요.
+  useEffect(() => {
+    if (!family || !ownUntil) return;
+    if (familyPremium && familyPremium.until >= ownUntil) return;
+    setFamilyPremium(family, ownUntil).then(() => setTick((t) => t + 1));
+  }, [family, ownUntil, familyPremium]);
+
+  const setTestPremium = useCallback(
+    (on: boolean) => {
+      setPremium(on);
+      setOwnUntil(on ? FAR_FUTURE : null);
+      AsyncStorage.setItem(TEST_KEY, on ? '1' : '0').catch(() => {});
+      // 테스트로 끌 때는 가족 프리미엄도 같이 꺼요.
+      if (!on && family) setFamilyPremium(family, null).then(() => setTick((t) => t + 1));
+    },
+    [family],
+  );
 
   const buy = useCallback(
     async (plan: Plan): Promise<'done' | 'cancelled'> => {
@@ -123,8 +175,10 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       }
       try {
         const r = await Purchases.purchasePackage(plan.pkg);
-        const ok = !!r.customerInfo.entitlements.active[PREMIUM_ENTITLEMENT];
+        const ent = (r.customerInfo as Info).entitlements.active[PREMIUM_ENTITLEMENT];
+        const ok = !!ent;
         setPremium(ok);
+        setOwnUntil(ent ? (ent.expirationDate ?? FAR_FUTURE) : null);
         return ok ? 'done' : 'cancelled';
       } catch (e) {
         if ((e as { userCancelled?: boolean }).userCancelled) return 'cancelled';
@@ -135,16 +189,22 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   );
 
   const restore = useCallback(async () => {
-    if (TEST_MODE) return isPremium;
-    const info = await Purchases.restorePurchases();
-    const ok = !!info.entitlements.active[PREMIUM_ENTITLEMENT];
-    setPremium(ok);
-    return ok;
-  }, [isPremium]);
+    if (TEST_MODE) return ownPremium;
+    const info = (await Purchases.restorePurchases()) as Info;
+    const ent = info.entitlements.active[PREMIUM_ENTITLEMENT];
+    setPremium(!!ent);
+    setOwnUntil(ent ? (ent.expirationDate ?? FAR_FUTURE) : null);
+    return !!ent;
+  }, [ownPremium]);
+
+  const familyActive = !!familyPremium && new Date(familyPremium.until).getTime() > Date.now();
+  const isPremium = ownPremium || familyActive;
 
   const value = useMemo<PremiumState>(
     () => ({
       isPremium,
+      ownPremium,
+      familyPremium: familyActive ? familyPremium : null,
       plans,
       paywallOpen: paywall.open,
       paywallReason: paywall.reason,
@@ -154,7 +214,7 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       restore,
       setTestPremium,
     }),
-    [isPremium, plans, paywall, buy, restore, setTestPremium],
+    [isPremium, ownPremium, familyActive, familyPremium, plans, paywall, buy, restore, setTestPremium],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

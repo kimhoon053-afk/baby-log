@@ -10,6 +10,7 @@ const FEATURES: { icon: string; title: string; desc: string }[] = [
   { icon: '📏', title: '성장 곡선 비교', desc: '키·몸무게·머리둘레를 또래(WHO 성장 기준)와 비교' },
   { icon: '📄', title: '소아과용 리포트', desc: '최근 기록 요약을 PDF로 만들어 진료 때 보여주기' },
   { icon: '📊', title: '30일 통계', desc: '한 달 동안의 평균과 그래프' },
+  { icon: '👨‍👩‍👧', title: '가족 모두 함께', desc: '한 명만 구독하면 가족 공유 중인 모든 휴대폰에서 프리미엄' },
 ];
 
 export default function Paywall() {
@@ -74,7 +75,12 @@ export default function Paywall() {
         {p.isPremium ? (
           <View style={[styles.card, { alignItems: 'center' }]}>
             <Text style={styles.featureTitle}>지금 프리미엄을 쓰고 있어요 ✅</Text>
-            {TEST_MODE && (
+            {!p.ownPremium && p.familyPremium && (
+              <Text style={[styles.featureDesc, { marginTop: 6, textAlign: 'center' }]}>
+                {p.familyPremium.byName ? `${p.familyPremium.byName}님이` : '가족이'} 구독해서 함께 쓰고 있어요.
+              </Text>
+            )}
+            {TEST_MODE && p.ownPremium && (
               <Pressable onPress={() => p.setTestPremium(false)} style={[styles.secondary, { marginTop: 12 }]}>
                 <Text style={styles.secondaryText}>테스트: 프리미엄 끄기</Text>
               </Pressable>
