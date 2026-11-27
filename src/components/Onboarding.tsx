@@ -92,6 +92,7 @@ export default function Onboarding({ onOpenFamily }: { onOpenFamily: () => void 
               <View style={[styles.circle, { backgroundColor: s.bg }]}>
                 <Text style={styles.icon}>{s.icon}</Text>
               </View>
+              {s === SLIDES[0] && <Text style={styles.brand}>꼬물노트에 오신 걸 환영해요</Text>}
               {s.badge && (
                 <Text style={[styles.badge, { color: s.color, backgroundColor: s.bg }]}>{s.badge}</Text>
               )}
@@ -142,6 +143,7 @@ const styles = StyleSheet.create({
   slide: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 30 },
   circle: { width: 140, height: 140, borderRadius: 70, alignItems: 'center', justifyContent: 'center' },
   icon: { fontSize: 68 },
+  brand: { marginTop: 22, fontSize: 15, fontWeight: '800', color: C.sleepDeep },
   badge: {
     marginTop: 22,
     fontSize: 13,

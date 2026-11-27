@@ -55,7 +55,7 @@ export default function Paywall() {
         <Pressable onPress={p.closePaywall} style={styles.close} hitSlop={12}>
           <Text style={styles.closeText}>✕</Text>
         </Pressable>
-        <Text style={styles.badge}>⭐ 프리미엄</Text>
+        <Text style={styles.badge}>⭐ 꼬물노트 프리미엄</Text>
         <Text style={styles.title}>우리 아기를 더 깊이 알아보세요</Text>
         {p.paywallReason ? <Text style={styles.reason}>🔒 {p.paywallReason} · 프리미엄 기능</Text> : null}
 
