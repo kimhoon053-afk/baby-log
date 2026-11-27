@@ -12,6 +12,7 @@ import {
   timeLabel,
 } from '../format';
 import { nextFeedAt, type ReminderSettings } from '../reminders';
+import { playButton, type ButtonFeedback } from '../sounds';
 import type { StoreContext } from '../store';
 import { newId } from '../storage';
 import { C } from '../theme';
@@ -26,9 +27,10 @@ type Props = {
   onOpenAlarm: () => void;
   ctx: StoreContext;
   title: string;
+  feedback: ButtonFeedback;
 };
 
-export default function LogScreen({ entries, reload, now, setNow, reminder, onOpenAlarm, ctx, title }: Props) {
+export default function LogScreen({ entries, reload, now, setNow, reminder, onOpenAlarm, ctx, title, feedback }: Props) {
   const { store } = ctx;
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaMl, setFormulaMl] = useState(120);
@@ -48,6 +50,7 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
   };
 
   const add = async (partial: Pick<LogEntry, 'kind' | 'subtype'> & Partial<LogEntry>, label: string) => {
+    playButton(partial.kind, feedback);
     const t = new Date().toISOString();
     const entry: LogEntry = {
       id: newId(),
@@ -89,6 +92,7 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
 
   const toggleSleep = async () => {
     if (sleeping) {
+      playButton('wake', feedback);
       const t = new Date().toISOString();
       if (!(await attempt(() => store.save({ ...sleeping, endAt: t, updatedAt: t })))) return;
       setNow(Date.now());

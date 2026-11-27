@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureSignedIn, supabase } from './supabase';
 import type { LogEntry } from './types';
 import { toRow } from './cloudStore';
+import { removePushDevice } from './push';
 
 // 가족 공유 정보 (이 기기가 어느 아기의 가족인지)를 기억해 둡니다.
 
@@ -98,6 +99,7 @@ export async function listMembers(babyId: string): Promise<Member[]> {
 /** 이 기기만 가족 공유에서 빠집니다. 다른 가족의 기록은 그대로 남아요. */
 export async function leaveFamily(f: Family): Promise<void> {
   try {
+    await removePushDevice(f);
     await supabase!.from('members').delete().eq('baby_id', f.babyId).eq('user_id', f.userId);
   } catch {
     // 인터넷이 없어도 이 기기에서는 빠지게 합니다.

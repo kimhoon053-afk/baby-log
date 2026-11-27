@@ -62,7 +62,7 @@ export async function ensurePermission(): Promise<boolean> {
 }
 
 let channelsReady = false;
-async function ensureChannels() {
+export async function ensureChannels() {
   if (channelsReady || Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(CH_SOUND, {
     name: '수유 알림',

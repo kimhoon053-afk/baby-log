@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 
 import { durationLabel, timeLabel } from '../format';
 import { QUIET_END_HOUR, QUIET_START_HOUR, nextFeedAt, type ReminderSettings } from '../reminders';
+import type { ButtonFeedback } from '../sounds';
 import { C } from '../theme';
 
 const CHOICES = [90, 120, 150, 180, 210, 240];
@@ -13,15 +14,17 @@ type Props = {
   onAskPermission: () => void;
   lastFeedIso?: string;
   now: number;
+  feedback: ButtonFeedback;
+  onFeedbackChange: (f: ButtonFeedback) => void;
 };
 
-export default function AlarmScreen({ settings, onChange, permission, onAskPermission, lastFeedIso, now }: Props) {
+export default function AlarmScreen({ settings, onChange, permission, onAskPermission, lastFeedIso, now, feedback, onFeedbackChange }: Props) {
   const set = (patch: Partial<ReminderSettings>) => onChange({ ...settings, ...patch });
   const due = nextFeedAt(lastFeedIso, settings);
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Text style={styles.title}>수유 알림</Text>
+      <Text style={styles.title}>알림 · 소리</Text>
 
       <View style={styles.card}>
         <View style={styles.rowBetween}>
@@ -120,7 +123,62 @@ export default function AlarmScreen({ settings, onChange, permission, onAskPermi
           </Text>
         )}
       </View>
+
+      <Text style={styles.section}>기록 버튼 소리</Text>
+      <View style={styles.card}>
+        <ToggleRow
+          label="버튼 소리"
+          help="수유·기저귀·수면 버튼을 누르면 짧은 소리가 나요."
+          value={feedback.sound}
+          onChange={(v) => onFeedbackChange({ ...feedback, sound: v })}
+        />
+        <View style={styles.divider} />
+        <ToggleRow
+          label="밤에는 소리 끄기"
+          help={`밤 ${QUIET_START_HOUR - 12}시 ~ 아침 ${QUIET_END_HOUR}시에는 아기가 깨지 않게 소리 없이 기록해요.`}
+          value={feedback.quietNight}
+          onChange={(v) => onFeedbackChange({ ...feedback, quietNight: v })}
+          disabled={!feedback.sound}
+        />
+        <View style={styles.divider} />
+        <ToggleRow
+          label="진동"
+          help="버튼을 누르면 살짝 진동해요."
+          value={feedback.vibrate}
+          onChange={(v) => onFeedbackChange({ ...feedback, vibrate: v })}
+        />
+      </View>
     </ScrollView>
+  );
+}
+
+function ToggleRow({
+  label,
+  help,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  help: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <View style={[styles.rowBetween, disabled && styles.dim]}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.help}>{help}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        disabled={disabled}
+        trackColor={{ true: C.feedDeep, false: C.line }}
+        thumbColor="#fff"
+      />
+    </View>
   );
 }
 
@@ -130,6 +188,7 @@ const styles = StyleSheet.create({
   section: { fontSize: 15, fontWeight: '700', color: C.sub, marginTop: 22, marginBottom: 8 },
   card: { backgroundColor: C.card, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: C.line },
   dim: { opacity: 0.45 },
+  divider: { height: 1, backgroundColor: C.line, marginVertical: 12 },
   warn: { marginTop: 10, backgroundColor: '#FFF1F0', borderColor: '#F5C2C0' },
   warnText: { color: C.danger, fontSize: 14, lineHeight: 20 },
   rowBetween: { flexDirection: 'row', alignItems: 'center', gap: 12 },

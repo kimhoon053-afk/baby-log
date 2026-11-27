@@ -12,7 +12,9 @@ import {
   saveReminder,
   type ReminderSettings,
 } from './src/reminders';
+import { syncPushDevice } from './src/push';
 import AlarmScreen from './src/screens/AlarmScreen';
+import { DEFAULT_FEEDBACK, loadFeedback, saveFeedback, type ButtonFeedback } from './src/sounds';
 import LogScreen from './src/screens/LogScreen';
 import StatsScreen from './src/screens/StatsScreen';
 import { subscribeLogs } from './src/cloudStore';
@@ -44,6 +46,7 @@ function Main() {
   const [reminderLoaded, setReminderLoaded] = useState(false);
   const [permission, setPermission] = useState<'granted' | 'denied' | 'unknown'>('unknown');
 
+  const [feedback, setFeedback] = useState<ButtonFeedback>(DEFAULT_FEEDBACK);
   const [family, setFamily] = useState<Family | null>(null);
   const [familyLoaded, setFamilyLoaded] = useState(false);
   const ctx = useMemo(() => storeFor(family), [family]);
@@ -89,6 +92,7 @@ function Main() {
   }, []);
 
   useEffect(() => {
+    loadFeedback().then(setFeedback);
     loadReminder().then((s) => {
       setReminder(s);
       setReminderLoaded(true);
@@ -98,12 +102,23 @@ function Main() {
     return () => clearInterval(t);
   }, [askPermission]);
 
-  // 마지막 수유나 알림 설정이 바뀌면 알림 예약을 다시 맞춥니다.
+  // 진짜 앱 + 가족 공유 중이면 서버가 가족 모두에게 알림을 보내요 (서버 푸시).
+  const [serverPush, setServerPush] = useState(false);
+  useEffect(() => {
+    if (!reminderLoaded) return;
+    let alive = true;
+    syncPushDevice(family, reminder).then((ok) => alive && setServerPush(ok));
+    return () => {
+      alive = false;
+    };
+  }, [family, reminder, reminderLoaded, permission]);
+
+  // 그 밖에는 휴대폰 안에서 알림을 예약해요. 마지막 수유나 설정이 바뀌면 다시 맞춥니다.
   const lastFeedIso = entries.find((e) => e.kind === 'feed')?.startAt;
   useEffect(() => {
     if (!reminderLoaded || Platform.OS === 'web') return;
-    rescheduleFeedReminder(lastFeedIso, reminder).catch(() => {});
-  }, [lastFeedIso, reminder, reminderLoaded, permission]);
+    rescheduleFeedReminder(serverPush ? undefined : lastFeedIso, reminder).catch(() => {});
+  }, [lastFeedIso, reminder, reminderLoaded, permission, serverPush]);
 
   // 알림을 눌러 앱을 열면 기록 화면으로 갑니다.
   useEffect(() => {
@@ -130,6 +145,7 @@ function Main() {
             onOpenAlarm={() => setTab('alarm')}
             ctx={ctx}
             title={family ? `${family.babyName} 기록` : '아기 기록'}
+            feedback={feedback}
           />
         )}
         {tab === 'stats' && <StatsScreen entries={entries} now={now} />}
@@ -141,6 +157,11 @@ function Main() {
             onAskPermission={askPermission}
             lastFeedIso={lastFeedIso}
             now={now}
+            feedback={feedback}
+            onFeedbackChange={(f) => {
+              setFeedback(f);
+              saveFeedback(f);
+            }}
           />
         )}
         {tab === 'family' && (
