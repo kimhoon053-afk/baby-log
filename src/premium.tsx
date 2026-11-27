@@ -17,13 +17,15 @@ export type Plan = {
   title: string;
   price: string;
   note?: string;
+  /** 무료 체험 기간이 있으면 true (구글 플레이 콘솔에서 7일 무료 체험 혜택을 켜 둬요) */
+  trial?: boolean;
   pkg?: PurchasesPackage;
 };
 
 /** 결제가 연결되기 전에 보여 줄 예시 가격 */
 const SAMPLE_PLANS: Plan[] = [
-  { id: 'annual', title: '1년', price: '₩29,000', note: '한 달에 약 2,400원 · 38% 할인' },
-  { id: 'monthly', title: '1개월', price: '₩3,900' },
+  { id: 'annual', title: '1년', price: '₩19,900', note: '한 달에 약 1,650원 · 43% 할인', trial: true },
+  { id: 'monthly', title: '1개월', price: '₩2,900', trial: true },
 ];
 
 type PremiumState = {
@@ -71,8 +73,30 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
           const out: Plan[] = [];
           const annual = pick(PACKAGE_TYPE.ANNUAL);
           const monthly = pick(PACKAGE_TYPE.MONTHLY);
-          if (annual) out.push({ id: 'annual', title: '1년', price: annual.product.priceString, pkg: annual });
-          if (monthly) out.push({ id: 'monthly', title: '1개월', price: monthly.product.priceString, pkg: monthly });
+          const hasTrial = (p: PurchasesPackage) => !!p.product.defaultOption?.freePhase;
+          if (annual) {
+            // 월 구독 12개월 값과 비교해 몇 % 싼지 보여 줘요.
+            const m = monthly?.product.price;
+            const off = m ? Math.round((1 - annual.product.price / (m * 12)) * 100) : 0;
+            const perMonth = Math.round(annual.product.price / 12 / 10) * 10;
+            out.push({
+              id: 'annual',
+              title: '1년',
+              price: annual.product.priceString,
+              note: `한 달에 약 ${perMonth.toLocaleString('ko-KR')}원${off > 0 ? ` · ${off}% 할인` : ''}`,
+              trial: hasTrial(annual),
+              pkg: annual,
+            });
+          }
+          if (monthly) {
+            out.push({
+              id: 'monthly',
+              title: '1개월',
+              price: monthly.product.priceString,
+              trial: hasTrial(monthly),
+              pkg: monthly,
+            });
+          }
           if (out.length > 0) setPlans(out);
         })
         .catch(() => {});

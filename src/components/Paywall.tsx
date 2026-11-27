@@ -90,7 +90,10 @@ export default function Paywall() {
               >
                 <View style={[styles.radio, selected === pl.id && styles.radioOn]} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.planTitle}>{pl.title}</Text>
+                  <Text style={styles.planTitle}>
+                    {pl.title}
+                    {pl.id === 'annual' ? <Text style={styles.best}>  추천</Text> : null}
+                  </Text>
                   {pl.note ? <Text style={styles.planNote}>{pl.note}</Text> : null}
                 </View>
                 <Text style={styles.planPrice}>{pl.price}</Text>
@@ -101,9 +104,16 @@ export default function Paywall() {
               {busy ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.buyText}>{TEST_MODE ? '테스트로 프리미엄 켜기' : '구독 시작하기'}</Text>
+                <Text style={styles.buyText}>
+                  {TEST_MODE ? '테스트로 프리미엄 켜기' : plan?.trial ? '7일 무료로 시작하기' : '구독 시작하기'}
+                </Text>
               )}
             </Pressable>
+            {plan?.trial && (
+              <Text style={styles.trial}>
+                처음 7일은 무료예요. 7일 안에 해지하면 돈이 나가지 않고, 그 뒤에 {plan.price}이 결제돼요.
+              </Text>
+            )}
             {TEST_MODE ? (
               <Text style={styles.fine}>
                 아직 구글 플레이 결제가 연결되기 전이라 테스트 모드예요. 버튼을 눌러도 돈이 나가지 않아요.
@@ -177,6 +187,8 @@ const styles = StyleSheet.create({
   radioOn: { borderColor: C.feedDeep, borderWidth: 6 },
   planTitle: { fontSize: 17, fontWeight: '800', color: C.text },
   planNote: { fontSize: 13, color: C.feedDeep, marginTop: 2, fontWeight: '600' },
+  best: { fontSize: 12, color: C.feedDeep, fontWeight: '800' },
+  trial: { fontSize: 13, color: C.text, marginTop: 10, textAlign: 'center', lineHeight: 19, fontWeight: '600' },
   planPrice: { fontSize: 18, fontWeight: '800', color: C.text },
   buy: {
     backgroundColor: C.feedDeep,
