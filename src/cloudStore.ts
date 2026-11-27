@@ -90,17 +90,27 @@ export function cloudStore(): LogStore {
 /** 다른 가족이 기록을 추가·수정·삭제하면 onChange 를 불러 줍니다. 끝낼 때는 돌려준 함수를 부르세요. */
 export function subscribeLogs(babyId: string, onChange: () => void): () => void {
   if (!supabase) return () => {};
-  const channel = supabase
-    .channel(`logs-${babyId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'logs', filter: `baby_id=eq.${babyId}` },
-      () => onChange(),
-    )
-    // 삭제 알림에는 아기 정보가 안 들어 있어서 따로 받습니다.
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'logs' }, () => onChange())
-    .subscribe();
+  const sb = supabase;
+  let stopped = false;
+  let channel: ReturnType<typeof sb.channel> | null = null;
+  (async () => {
+    // 실시간 연결에도 로그인 정보를 먼저 넣어야 가족 기록 알림이 와요.
+    await sb.auth.getSession();
+    await sb.realtime.setAuth();
+    if (stopped) return;
+    channel = sb
+      .channel(`logs-${babyId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'logs', filter: `baby_id=eq.${babyId}` },
+        () => onChange(),
+      )
+      // 삭제 알림에는 아기 정보가 안 들어 있어서 따로 받습니다.
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'logs' }, () => onChange())
+      .subscribe();
+  })().catch(() => {});
   return () => {
-    supabase!.removeChannel(channel);
+    stopped = true;
+    if (channel) sb.removeChannel(channel);
   };
 }
