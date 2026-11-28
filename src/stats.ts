@@ -109,3 +109,60 @@ export function activeDays(range: DayStats[], entries: LogEntry[], now: number):
   const done = range.filter((d) => d.start >= firstDay && d.start < today);
   return done.length > 0 ? done : range.filter((d) => d.start === today);
 }
+
+export type WeekStats = {
+  /** 이 주 첫날 0시 */
+  start: number;
+  /** 평균에 들어간 날 수 (0이면 기록 없는 주) */
+  days: number;
+  feedCount: number | null;
+  gapMin: number | null;
+  formulaMl: number | null;
+  diaper: number | null;
+  sleepHours: number | null;
+  /** 하루 중 가장 길게 잔 잠 (시간) */
+  longestSleepHours: number | null;
+};
+
+/**
+ * 최근 n주를 7일씩 묶은 주별 하루 평균. 오래된 주 → 이번 주 순서.
+ * 앱을 쓰기 전 날과 아직 안 끝난 오늘은 평균에서 빼요.
+ */
+export function computeWeeks(entries: LogEntry[], weeks: number, now: number): WeekStats[] {
+  const range = computeRange(entries, weeks * 7, now);
+  const today = startOfDay(now);
+  const first = entries.length ? startOfDay(Math.min(...entries.map((e) => new Date(e.startAt).getTime()))) : today;
+  const longest = longestSleepByDay(entries, now);
+  const out: WeekStats[] = [];
+  for (let w = 0; w < weeks; w++) {
+    const chunk = range.slice(w * 7, w * 7 + 7);
+    let use = chunk.filter((d) => d.start >= first && d.start < today);
+    if (use.length === 0 && w === weeks - 1) use = chunk.filter((d) => d.start === today && d.start >= first);
+    const avg = (f: (d: DayStats) => number) => (use.length ? average(use.map(f)) : null);
+    const ls = use.map((d) => longest.get(d.start) ?? 0);
+    out.push({
+      start: chunk[0].start,
+      days: use.length,
+      feedCount: avg((d) => d.feedCount),
+      gapMin: use.length ? average(use.flatMap((d) => d.feedGapsMin)) : null,
+      formulaMl: avg((d) => d.formulaMl),
+      diaper: avg((d) => d.peeCount + d.poopCount),
+      sleepHours: avg((d) => d.sleepMs / 3600000),
+      longestSleepHours: ls.length ? average(ls)! / 3600000 : null,
+    });
+  }
+  return out;
+}
+
+/** 날짜(그날 0시) → 그날 시작한 잠 중 가장 긴 잠 (ms) */
+export function longestSleepByDay(entries: LogEntry[], now: number): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const e of entries) {
+    if (e.kind !== 'sleep') continue;
+    const s = new Date(e.startAt).getTime();
+    const len = (e.endAt ? new Date(e.endAt).getTime() : now) - s;
+    const k = startOfDay(s);
+    m.set(k, Math.max(m.get(k) ?? 0, len));
+  }
+  return m;
+}

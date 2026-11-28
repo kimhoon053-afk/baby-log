@@ -1,35 +1,83 @@
 import { useMemo, useState } from 'react';
-import { ScrollView, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import LineChart from '../components/LineChart';
+import { Locked } from '../components/Paywall';
+import PatternClock from '../components/PatternClock';
 import { durationLabel } from '../format';
-import { activeDays, average, computeDay, computeRange, startOfDay, type DayStats } from '../stats';
+import { usePremium } from '../premium';
+import { shareReport } from '../report';
+import { activeDays, average, computeDay, computeRange, computeWeeks, startOfDay, type DayStats } from '../stats';
 import { C } from '../theme';
 import type { LogEntry } from '../types';
 
-type Period = 'today' | 'week' | 'month';
+type Period = 'today' | 'week' | 'month' | 'trend' | 'pattern';
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
-export default function StatsScreen({ entries, now }: { entries: LogEntry[]; now: number }) {
+export default function StatsScreen({
+  entries,
+  now,
+  babyName,
+}: {
+  entries: LogEntry[];
+  now: number;
+  babyName: string;
+}) {
   const [period, setPeriod] = useState<Period>('today');
+  const { isPremium, openPaywall } = usePremium();
+  const [making, setMaking] = useState(false);
+
+  const onReport = async () => {
+    if (!isPremium) {
+      openPaywall('소아과용 리포트');
+      return;
+    }
+    if (entries.length === 0) {
+      Alert.alert('아직 기록이 없어요', '기록이 쌓이면 리포트를 만들 수 있어요.');
+      return;
+    }
+    setMaking(true);
+    try {
+      await shareReport(entries, now, babyName);
+    } catch {
+      Alert.alert('리포트를 만들지 못했어요', '잠시 후 다시 해 주세요.');
+    } finally {
+      setMaking(false);
+    }
+  };
+
+  const tabs: [Period, string, boolean][] = [
+    ['today', '오늘', false],
+    ['week', '7일', false],
+    ['month', '30일', true],
+    ['trend', '추세', true],
+    ['pattern', '패턴', true],
+  ];
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Text style={styles.title}>통계</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>통계</Text>
+        <Pressable onPress={onReport} style={styles.reportBtn} disabled={making}>
+          {making ? (
+            <ActivityIndicator color={C.feedDeep} />
+          ) : (
+            <Text style={styles.reportText}>📄 소아과 리포트{isPremium ? '' : ' ⭐'}</Text>
+          )}
+        </Pressable>
+      </View>
       <View style={styles.segment}>
-        {(
-          [
-            ['today', '오늘'],
-            ['week', '최근 7일'],
-            ['month', '최근 30일'],
-          ] as const
-        ).map(([key, label]) => (
+        {tabs.map(([key, label, paid]) => (
           <Pressable
             key={key}
             onPress={() => setPeriod(key)}
             style={[styles.segBtn, period === key && styles.segBtnOn]}
           >
-            <Text style={[styles.segText, period === key && styles.segTextOn]}>{label}</Text>
+            <Text style={[styles.segText, period === key && styles.segTextOn]}>
+              {label}
+              {paid && !isPremium ? <Text style={styles.star}>⭐</Text> : null}
+            </Text>
           </Pressable>
         ))}
       </View>
@@ -38,10 +86,110 @@ export default function StatsScreen({ entries, now }: { entries: LogEntry[]; now
         <Text style={styles.empty}>기록이 쌓이면 여기에서 통계를 볼 수 있어요.</Text>
       ) : period === 'today' ? (
         <TodayView entries={entries} now={now} />
+      ) : period === 'week' ? (
+        <RangeView entries={entries} now={now} days={7} />
+      ) : !isPremium ? (
+        <Locked
+          title={period === 'month' ? '최근 30일 통계' : period === 'trend' ? '추세 그래프' : '하루 패턴 시계'}
+          desc={
+            period === 'month'
+              ? '한 달 동안의 하루 평균과 날짜별 그래프를 볼 수 있어요.'
+              : period === 'trend'
+                ? '수유 간격, 수면 시간, 분유 양이 주마다 어떻게 변했는지 꺾은선으로 보여줘요.'
+                : '24시간 시계에 최근 7일의 잠·수유·기저귀를 겹쳐서 아기 생활 리듬을 한눈에 보여줘요.'
+          }
+          reason={period === 'month' ? '30일 통계' : period === 'trend' ? '추세 그래프' : '하루 패턴 시계'}
+        />
+      ) : period === 'month' ? (
+        <RangeView entries={entries} now={now} days={30} />
+      ) : period === 'trend' ? (
+        <TrendView entries={entries} now={now} />
       ) : (
-        <RangeView entries={entries} now={now} days={period === 'week' ? 7 : 30} />
+        <PatternView entries={entries} now={now} />
       )}
     </ScrollView>
+  );
+}
+
+function weekLabel(t: number): string {
+  const d = new Date(t);
+  return `${d.getMonth() + 1}/${d.getDate()}주`;
+}
+
+function TrendView({ entries, now }: { entries: LogEntry[]; now: number }) {
+  const weeks = useMemo(() => {
+    const all = computeWeeks(entries, 12, now);
+    // 기록이 3일 이상 있는 주부터 보여 줘요. (앱을 쓰기 시작한 주는 며칠뿐이라 평균이 들쭉날쭉해요)
+    const firstIdx = all.findIndex((w, i) => w.days >= 3 || (i === all.length - 1 && w.days > 0));
+    return firstIdx < 0 ? [] : all.slice(firstIdx);
+  }, [entries, now]);
+
+  if (weeks.length < 2) {
+    return (
+      <Text style={styles.empty}>
+        추세는 2주 이상 기록이 쌓이면 보여요.{'\n'}지금은 {weeks.length}주째 기록 중이에요.
+      </Text>
+    );
+  }
+  const labels = weeks.map((w) => weekLabel(w.start));
+  const hrs = (v: number) => durationLabel(v * 3600000);
+  const n1 = (v: number) => v.toFixed(1).replace(/\.0$/, '');
+
+  return (
+    <View>
+      <Text style={styles.note}>주별 하루 평균 · 최근 {weeks.length}주</Text>
+      <LineChart
+        title="평균 수유 간격"
+        values={weeks.map((w) => (w.gapMin === null ? null : w.gapMin / 60))}
+        labels={labels}
+        color={C.feedDeep}
+        format={hrs}
+      />
+      <LineChart
+        title="하루 수유 횟수"
+        values={weeks.map((w) => w.feedCount)}
+        labels={labels}
+        color={C.feedDeep}
+        format={(v) => `${n1(v)}회`}
+      />
+      <LineChart
+        title="하루 분유 양"
+        values={weeks.map((w) => w.formulaMl)}
+        labels={labels}
+        color={C.feedDeep}
+        format={(v) => `${Math.round(v)}ml`}
+      />
+      <LineChart
+        title="하루 수면 시간"
+        values={weeks.map((w) => w.sleepHours)}
+        labels={labels}
+        color={C.sleepDeep}
+        format={hrs}
+      />
+      <LineChart
+        title="가장 길게 잔 잠"
+        values={weeks.map((w) => w.longestSleepHours)}
+        labels={labels}
+        color={C.sleepDeep}
+        format={hrs}
+      />
+      <LineChart
+        title="하루 기저귀"
+        values={weeks.map((w) => w.diaper)}
+        labels={labels}
+        color={C.diaperDeep}
+        format={(v) => `${n1(v)}회`}
+      />
+    </View>
+  );
+}
+
+function PatternView({ entries, now }: { entries: LogEntry[]; now: number }) {
+  return (
+    <View>
+      <Text style={styles.note}>같은 시간대에 색이 모여 있으면 그 시간이 아기의 규칙적인 리듬이에요.</Text>
+      <PatternClock entries={entries} now={now} days={7} />
+    </View>
   );
 }
 
@@ -294,11 +442,15 @@ function Tile({
 
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 40 },
-  title: { fontSize: 26, fontWeight: '800', color: C.text, marginTop: 4, marginBottom: 14 },
+  title: { fontSize: 26, fontWeight: '800', color: C.text },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, marginBottom: 14 },
+  reportBtn: { backgroundColor: C.feed, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, minWidth: 60 },
+  reportText: { color: C.feedDeep, fontWeight: '800', fontSize: 14 },
+  star: { fontSize: 10 },
   segment: { flexDirection: 'row', backgroundColor: C.line, borderRadius: 14, padding: 4, marginBottom: 16 },
   segBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   segBtnOn: { backgroundColor: C.card },
-  segText: { fontSize: 15, fontWeight: '600', color: C.sub },
+  segText: { fontSize: 14, fontWeight: '600', color: C.sub },
   segTextOn: { color: C.text, fontWeight: '800' },
   empty: { color: C.sub, fontSize: 15, paddingVertical: 24, textAlign: 'center' },
   note: { color: C.sub, fontSize: 13, marginBottom: 8 },

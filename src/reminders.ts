@@ -12,12 +12,15 @@ export type ReminderSettings = {
   enabled: boolean;
   intervalMin: number;
   quietNight: boolean;
+  /** 밤 10시~아침 7시에 화면을 어둡게 */
+  nightScreen: boolean;
 };
 
 export const DEFAULT_REMINDER: ReminderSettings = {
   enabled: true,
   intervalMin: 180,
   quietNight: true,
+  nightScreen: true,
 };
 
 export const QUIET_START_HOUR = 22;
@@ -61,6 +64,25 @@ export async function ensurePermission(): Promise<boolean> {
   return asked.granted;
 }
 
+// 알림에서 바로 기록하는 버튼 (앱이 열리면서 기록돼요)
+export const FEED_CATEGORY = 'feed-reminder';
+export const ACTION_BREAST = 'fed-breast';
+export const ACTION_FORMULA = 'fed-formula';
+
+let categoryReady = false;
+export async function ensureFeedCategory() {
+  if (categoryReady || Platform.OS === 'web') return;
+  try {
+    await Notifications.setNotificationCategoryAsync(FEED_CATEGORY, [
+      { identifier: ACTION_BREAST, buttonTitle: '🤱 모유 먹였어요', options: { opensAppToForeground: true } },
+      { identifier: ACTION_FORMULA, buttonTitle: '🍼 분유 먹였어요', options: { opensAppToForeground: true } },
+    ]);
+    categoryReady = true;
+  } catch {
+    // 버튼이 없어도 알림은 그대로 와요.
+  }
+}
+
 let channelsReady = false;
 export async function ensureChannels() {
   if (channelsReady || Platform.OS !== 'android') return;
@@ -93,6 +115,8 @@ export function nextFeedAt(lastFeedIso: string | undefined, s: ReminderSettings)
 export async function rescheduleFeedReminder(
   lastFeedIso: string | undefined,
   s: ReminderSettings,
+  /** 밤 당번이 다른 사람이면 true: 밤(10시~7시) 알림은 이 휴대폰에서 울리지 않아요 */
+  notOnNightDuty = false,
 ): Promise<void> {
   if (Platform.OS === 'web') return;
   for (const id of IDS) {
@@ -103,6 +127,7 @@ export async function rescheduleFeedReminder(
   const perm = await Notifications.getPermissionsAsync();
   if (!perm.granted) return;
   await ensureChannels();
+  await ensureFeedCategory();
 
   const lastLabel = timeLabel(lastFeedIso!);
   const plan = [
@@ -122,10 +147,16 @@ export async function rescheduleFeedReminder(
 
   for (const p of plan) {
     if (p.at <= Date.now() + 5000) continue;
+    if (notOnNightDuty && isQuietTime(new Date(p.at))) continue;
     const quiet = s.quietNight && isQuietTime(new Date(p.at));
     await Notifications.scheduleNotificationAsync({
       identifier: p.id,
-      content: { title: p.title, body: p.body, sound: quiet ? false : 'default' },
+      content: {
+        title: p.title,
+        body: p.body,
+        sound: quiet ? false : 'default',
+        categoryIdentifier: FEED_CATEGORY,
+      },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: p.at,

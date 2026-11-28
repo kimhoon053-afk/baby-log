@@ -3,7 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import type { Family } from './family';
-import { ensureChannels, type ReminderSettings } from './reminders';
+import { ensureChannels, ensureFeedCategory, type ReminderSettings } from './reminders';
 import { supabase } from './supabase';
 
 // 가족 모두에게 가는 수유 알림 (서버 푸시).
@@ -43,6 +43,7 @@ export async function syncPushDevice(family: Family | null, s: ReminderSettings)
     const perm = await Notifications.getPermissionsAsync();
     if (!perm.granted) return false;
     await ensureChannels();
+    await ensureFeedCategory();
     const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     const { error } = await supabase!.from('push_devices').upsert({
       user_id: family.userId,

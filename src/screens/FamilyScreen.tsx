@@ -178,7 +178,7 @@ function Joined({ family, onLeft }: { family: Family; onLeft: () => void }) {
 
   const share = () =>
     Share.share({
-      message: `[아기 기록] ${family.babyName} 기록을 같이 봐요!\n앱의 '가족' 메뉴에서 초대 코드 ${family.inviteCode} 를 입력해 주세요.`,
+      message: `[꼬물노트] ${family.babyName} 기록을 같이 봐요!\n앱의 '가족' 메뉴에서 초대 코드 ${family.inviteCode} 를 입력해 주세요.`,
     });
 
   const leave = () =>

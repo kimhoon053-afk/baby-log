@@ -1,12 +1,13 @@
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 
 import {
   DEFAULT_REMINDER,
   ensurePermission,
+  isQuietTime,
   loadReminder,
   rescheduleFeedReminder,
   saveReminder,
@@ -14,18 +15,23 @@ import {
 } from './src/reminders';
 import { syncPushDevice } from './src/push';
 import AlarmScreen from './src/screens/AlarmScreen';
+import Onboarding from './src/components/Onboarding';
+import Paywall from './src/components/Paywall';
+import { PremiumProvider } from './src/premium';
+import GrowthScreen from './src/screens/GrowthScreen';
 import { DEFAULT_FEEDBACK, loadFeedback, saveFeedback, type ButtonFeedback } from './src/sounds';
 import LogScreen from './src/screens/LogScreen';
 import StatsScreen from './src/screens/StatsScreen';
 import { subscribeLogs } from './src/cloudStore';
-import { loadFamily, type Family } from './src/family';
+import { fetchNightDuty, loadFamily, setNightDuty, type Family } from './src/family';
+import { recordFromNotification } from './src/quickLog';
 import FamilyScreen from './src/screens/FamilyScreen';
 import { localStore } from './src/storage';
 import { LOCAL_BABY_ID, storeFor } from './src/store';
 import { C } from './src/theme';
 import type { LogEntry } from './src/types';
 
-type Tab = 'log' | 'stats' | 'alarm' | 'family';
+type Tab = 'log' | 'stats' | 'growth' | 'alarm' | 'family';
 
 export default function App() {
   return (
@@ -113,19 +119,56 @@ function Main() {
     };
   }, [family, reminder, reminderLoaded, permission]);
 
+  // 밤 당번 (가족 공유 중일 때만). 밤에는 당번 휴대폰에만 알림이 울려요.
+  const [nightDuty, setNightDutyState] = useState<string | null>(null);
+  useEffect(() => {
+    if (!family) {
+      setNightDutyState(null);
+      return;
+    }
+    fetchNightDuty(family.babyId).then(setNightDutyState);
+  }, [family, tab]);
+  const changeNightDuty = async (userId: string | null) => {
+    if (!family) return;
+    const before = nightDuty;
+    setNightDutyState(userId);
+    if (!(await setNightDuty(family, userId))) {
+      setNightDutyState(before);
+      Alert.alert('바꾸지 못했어요', '인터넷 연결을 확인해 주세요. (처음이라면 서버 설정 파일을 먼저 실행해야 해요)');
+    }
+  };
+  const notOnNightDuty = !!family && !!nightDuty && nightDuty !== family.userId;
+
   // 그 밖에는 휴대폰 안에서 알림을 예약해요. 마지막 수유나 설정이 바뀌면 다시 맞춥니다.
   const lastFeedIso = entries.find((e) => e.kind === 'feed')?.startAt;
   useEffect(() => {
     if (!reminderLoaded || Platform.OS === 'web') return;
-    rescheduleFeedReminder(serverPush ? undefined : lastFeedIso, reminder).catch(() => {});
-  }, [lastFeedIso, reminder, reminderLoaded, permission, serverPush]);
+    rescheduleFeedReminder(serverPush ? undefined : lastFeedIso, reminder, notOnNightDuty).catch(() => {});
+  }, [lastFeedIso, reminder, reminderLoaded, permission, serverPush, notOnNightDuty]);
 
-  // 알림을 눌러 앱을 열면 기록 화면으로 갑니다.
+  // 알림을 눌러 앱을 열면 기록 화면으로 가고, "먹였어요" 버튼을 눌렀으면 바로 기록해요.
+  const response = Platform.OS === 'web' ? null : Notifications.useLastNotificationResponse();
+  const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
-    if (Platform.OS === 'web') return;
-    const sub = Notifications.addNotificationResponseReceivedListener(() => setTab('log'));
-    return () => sub.remove();
-  }, []);
+    if (!response || !familyLoaded) return;
+    setTab('log');
+    const n = response.notification;
+    const key = `${n.request.identifier}:${n.date}`;
+    recordFromNotification(response.actionIdentifier, key, ctx, Date.now())
+      .then((msg) => {
+        if (!msg) return;
+        Notifications.dismissNotificationAsync(n.request.identifier).catch(() => {});
+        setNow(Date.now());
+        reload();
+        setNotice(msg);
+        setTimeout(() => setNotice(null), 4000);
+      })
+      .catch(() => setNotice('기록하지 못했어요. 인터넷 연결을 확인해 주세요.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [response, familyLoaded]);
+
+  // 밤 화면: 밤 10시~아침 7시에는 화면 전체를 살짝 어둡게 해요.
+  const dim = reminder.nightScreen && isQuietTime(new Date(now));
 
   const changeReminder = (s: ReminderSettings) => {
     setReminder(s);
@@ -133,6 +176,7 @@ function Main() {
   };
 
   return (
+    <PremiumProvider family={family}>
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
         {tab === 'log' && (
@@ -148,7 +192,10 @@ function Main() {
             feedback={feedback}
           />
         )}
-        {tab === 'stats' && <StatsScreen entries={entries} now={now} />}
+        {tab === 'stats' && (
+          <StatsScreen entries={entries} now={now} babyName={family ? family.babyName : '우리 아기'} />
+        )}
+        {tab === 'growth' && <GrowthScreen now={now} babyName={family ? family.babyName : '아기 기록'} />}
         {tab === 'alarm' && (
           <AlarmScreen
             settings={reminder}
@@ -162,6 +209,9 @@ function Main() {
               setFeedback(f);
               saveFeedback(f);
             }}
+            family={family}
+            nightDuty={nightDuty}
+            onNightDutyChange={changeNightDuty}
           />
         )}
         {tab === 'family' && (
@@ -180,10 +230,22 @@ function Main() {
       <View style={styles.tabBar}>
         <TabButton icon="📝" label="기록" active={tab === 'log'} onPress={() => setTab('log')} />
         <TabButton icon="📊" label="통계" active={tab === 'stats'} onPress={() => setTab('stats')} />
+        <TabButton icon="📏" label="성장" active={tab === 'growth'} onPress={() => setTab('growth')} />
         <TabButton icon="⏰" label="알림" active={tab === 'alarm'} onPress={() => setTab('alarm')} />
         <TabButton icon="👨‍👩‍👧" label="가족" active={tab === 'family'} onPress={() => setTab('family')} />
       </View>
+
+      {notice && (
+        <View style={styles.notice} pointerEvents="none">
+          <Text style={styles.noticeText}>✅ {notice}</Text>
+        </View>
+      )}
+      {dim && <View style={styles.dim} pointerEvents="none" />}
+
+      <Paywall />
+      <Onboarding onOpenFamily={() => setTab('family')} />
     </View>
+    </PremiumProvider>
   );
 }
 
@@ -216,6 +278,17 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: 6,
   },
+  dim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(20, 12, 40, 0.45)' },
+  notice: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    right: 16,
+    backgroundColor: C.text,
+    borderRadius: 14,
+    padding: 14,
+  },
+  noticeText: { color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 4 },
   tabIcon: { fontSize: 22 },
   tabLabel: { fontSize: 12, color: C.sub, marginTop: 2, fontWeight: '600' },

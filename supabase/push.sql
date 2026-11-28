@@ -8,6 +8,9 @@
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
 
+-- 밤 당번: 밤 10시~아침 7시에는 당번으로 정한 사람 휴대폰에만 알림이 가요. (비어 있으면 모두에게)
+alter table public.babies add column if not exists night_duty_user uuid references auth.users(id) on delete set null;
+
 -- 알림을 받을 휴대폰과 그 휴대폰의 알림 설정
 create table if not exists public.push_devices (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -59,8 +62,9 @@ declare
   sent integer := 0;
 begin
   for r in
-    select d.*, lf.last_feed
+    select d.*, lf.last_feed, b.night_duty_user
     from public.push_devices d
+    join public.babies b on b.id = d.baby_id
     join public.members m on m.baby_id = d.baby_id and m.user_id = d.user_id
     cross join lateral (
       select max(l.start_at) as last_feed
@@ -85,6 +89,16 @@ begin
     local_now := now() at time zone r.tz;
     quiet := r.quiet_night and (extract(hour from local_now) >= 22 or extract(hour from local_now) < 7);
 
+    -- 밤에는 당번이 아닌 사람에게 보내지 않아요. (보낸 것으로 표시해서 아침에 몰려오지 않게)
+    if (extract(hour from local_now) >= 22 or extract(hour from local_now) < 7)
+       and r.night_duty_user is not null and r.night_duty_user <> r.user_id then
+      update public.push_devices
+        set notified_for = r.last_feed,
+            followed_up_for = case when kind = 'late' then r.last_feed else followed_up_for end
+        where user_id = r.user_id and baby_id = r.baby_id;
+      continue;
+    end if;
+
     perform net.http_post(
       url := 'https://exp.host/--/api/v2/push/send',
       body := jsonb_build_object(
@@ -96,6 +110,7 @@ begin
           public.korean_duration(r.interval_min + case when kind = 'late' then 30 else 0 end) || '이 지났어요.',
         'sound', case when quiet then null else 'default' end,
         'channelId', case when quiet then 'feed-quiet' else 'feed' end,
+        'categoryId', 'feed-reminder',
         'priority', 'high'
       ),
       headers := '{"Content-Type": "application/json", "Accept": "application/json"}'::jsonb

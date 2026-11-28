@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "아기 기록",
+    "name": "꼬물노트",
     "slug": "baby-log",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,7 +12,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#7B67E0",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -37,6 +37,16 @@
         "expo-notifications",
         {
           "color": "#E8763A"
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#7B67E0"
         }
       ]
     ],

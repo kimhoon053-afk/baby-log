@@ -106,3 +106,49 @@ export async function leaveFamily(f: Family): Promise<void> {
   }
   await saveFamily(null);
 }
+
+export type FamilyPremium = { until: string; byName: string | null };
+
+/** 가족 중 누군가 구독 중이면 그 정보 (supabase/premium.sql 을 실행해야 동작해요) */
+export async function fetchFamilyPremium(babyId: string): Promise<FamilyPremium | null> {
+  try {
+    const { data, error } = await supabase!
+      .from('babies')
+      .select('premium_until, premium_by_name')
+      .eq('id', babyId)
+      .maybeSingle();
+    if (error || !data?.premium_until) return null;
+    return { until: data.premium_until as string, byName: (data.premium_by_name as string | null) ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** 이 가족의 프리미엄 기간을 적어요. until 이 null 이면 꺼요. */
+export async function setFamilyPremium(f: Family, until: string | null): Promise<void> {
+  try {
+    await supabase!.rpc('set_family_premium', { b: f.babyId, until, by_name: f.myName });
+  } catch {
+    // 인터넷이 없거나 아직 premium.sql 을 실행하지 않았으면 다음에 다시 시도해요.
+  }
+}
+
+/** 밤 당번 (밤 10시~아침 7시에 알림을 받을 사람). null 이면 모두에게. */
+export async function fetchNightDuty(babyId: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase!.from('babies').select('night_duty_user').eq('id', babyId).maybeSingle();
+    if (error || !data) return null;
+    return (data.night_duty_user as string | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setNightDuty(f: Family, userId: string | null): Promise<boolean> {
+  try {
+    const { error } = await supabase!.rpc('set_night_duty', { b: f.babyId, u: userId });
+    return !error;
+  } catch {
+    return false;
+  }
+}
