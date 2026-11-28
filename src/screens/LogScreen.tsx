@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, SectionList, Share, StyleSheet, Text, View } from 'react-native';
 
 import {
   agoLabel,
@@ -13,6 +13,7 @@ import {
 } from '../format';
 import { nextFeedAt, type ReminderSettings } from '../reminders';
 import { playButton, type ButtonFeedback } from '../sounds';
+import { todaySummaryText } from '../summary';
 import type { StoreContext } from '../store';
 import { newId } from '../storage';
 import { C } from '../theme';
@@ -130,7 +131,20 @@ export default function LogScreen({ entries, reload, now, setNow, reminder, onOp
 
   const header = (
     <View>
-      <Text style={styles.appTitle}>{title}</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.appTitle}>{title}</Text>
+        <Pressable
+          onPress={() =>
+            Share.share({ message: todaySummaryText(entries, now, title.replace(/ 기록$/, '').replace('아기', '우리 아기')) }).catch(
+              () => {},
+            )
+          }
+          style={styles.shareBtn}
+          hitSlop={8}
+        >
+          <Text style={styles.shareText}>💬 오늘 요약 보내기</Text>
+        </Pressable>
+      </View>
 
       <NextFeedCard lastFeedIso={lastFeed?.startAt} reminder={reminder} now={now} onPress={onOpenAlarm} />
 
@@ -362,7 +376,10 @@ function FormulaModal({
 
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 120 },
-  appTitle: { fontSize: 26, fontWeight: '800', color: C.text, marginTop: 4, marginBottom: 14 },
+  appTitle: { fontSize: 26, fontWeight: '800', color: C.text, flexShrink: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4, marginBottom: 14, gap: 8 },
+  shareBtn: { backgroundColor: '#FEE500', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  shareText: { color: '#3A1D1D', fontWeight: '800', fontSize: 13 },
   nextCard: { backgroundColor: C.feed, borderRadius: 20, padding: 18, marginBottom: 10 },
   nextLabel: { fontSize: 14, fontWeight: '700', color: C.feedDeep },
   nextMain: { fontSize: 30, fontWeight: '800', color: C.text, marginTop: 4 },

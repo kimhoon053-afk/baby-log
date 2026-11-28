@@ -69,7 +69,7 @@ export default function Paywall() {
               </View>
             </View>
           ))}
-          <Text style={styles.free}>기록, 알림, 가족 공유, 오늘·7일 통계는 계속 무료예요.</Text>
+          <Text style={styles.free}>광고는 없어요. 기록, 알림, 밤 당번, 가족 공유, 오늘·7일 통계, 예방접종 알림은 계속 무료예요.</Text>
         </View>
 
         {p.isPremium ? (

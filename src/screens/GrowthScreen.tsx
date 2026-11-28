@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Keyboard, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Locked } from '../components/Paywall';
+import { loadDone, planFor, saveDone, scheduleCheckupReminders, shortDate, SOURCE_URL } from '../checkups';
 import {
   addGrowth,
   ageDays,
@@ -80,6 +81,8 @@ export default function GrowthScreen({ now, babyName }: { now: number; babyName:
         </Pressable>
       </View>
 
+      <CheckupCard birthDate={profile.birthDate} now={now} />
+
       <AddForm today={today} onAdd={async (e) => setList(await addGrowth(e))} />
 
       <Text style={styles.section}>또래와 비교 (WHO 성장 기준)</Text>
@@ -146,6 +149,73 @@ export default function GrowthScreen({ now, babyName }: { now: number; babyName:
         </>
       )}
     </ScrollView>
+  );
+}
+
+function CheckupCard({ birthDate, now }: { birthDate: string; now: number }) {
+  const [done, setDone] = useState<Set<string> | null>(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    loadDone().then(setDone);
+  }, []);
+  const plan = useMemo(() => (done ? planFor(birthDate, done) : []), [birthDate, done]);
+  useEffect(() => {
+    if (done) scheduleCheckupReminders(plan);
+  }, [plan, done]);
+  if (!done) return null;
+
+  const toggle = (id: string) => {
+    const next = new Set(done);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setDone(next);
+    saveDone(next).catch(() => {});
+  };
+
+  // 기본: 아직 안 했고 끝나지 않은 것 중 가까운 3개. 전체 보기: 모두.
+  const open = plan.filter((p) => !p.done && p.end > now);
+  const missed = plan.filter((p) => !p.done && p.end <= now);
+  const shown = all ? plan : open.slice(0, 3);
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>💉 예방접종 · 🩺 건강검진</Text>
+      {shown.length === 0 && <Text style={styles.help}>앞으로 남은 일정이 없어요.</Text>}
+      {shown.map((p) => {
+        const nowIn = !p.done && p.start <= now && now < p.end;
+        return (
+          <Pressable key={p.id} onPress={() => toggle(p.id)} style={styles.ckRow}>
+            <View style={[styles.ckBox, p.done && styles.ckBoxOn]}>{p.done && <Text style={styles.ckMark}>✓</Text>}</View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.ckTitle, p.done && styles.ckDone]}>
+                {p.title}
+                {nowIn ? <Text style={styles.ckNow}>  지금 할 때</Text> : null}
+              </Text>
+              <Text style={styles.ckSub}>
+                {shortDate(p.start)} ~ {shortDate(p.end)} · {p.detail}
+              </Text>
+            </View>
+          </Pressable>
+        );
+      })}
+      {!all && missed.length > 0 && (
+        <Text style={[styles.help, { marginTop: 8 }]}>
+          지난 일정 중 체크 안 한 게 {missed.length}개 있어요. 이미 했다면 전체 보기에서 체크해 주세요.
+        </Text>
+      )}
+      <View style={styles.ckFoot}>
+        <Pressable onPress={() => setAll(!all)} hitSlop={8}>
+          <Text style={styles.ckLink}>{all ? '접기' : '전체 일정 보기'}</Text>
+        </Pressable>
+        <Pressable onPress={() => Linking.openURL(SOURCE_URL).catch(() => {})} hitSlop={8}>
+          <Text style={styles.ckLink}>예방접종도우미 ↗</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.fine}>
+        눌러서 했다고 체크하면 알림이 꺼져요. 일정은 질병관리청 표준 일정 기준의 참고용이에요. 정확한 날짜는 소아과나
+        예방접종도우미에서 확인하세요.
+      </Text>
+    </View>
   );
 }
 
@@ -463,6 +533,25 @@ const styles = StyleSheet.create({
   pBadge: { fontSize: 13, color: C.feedDeep, fontWeight: '800' },
   pDesc: { fontSize: 13, color: C.sub, marginTop: 2 },
   fine: { fontSize: 12, color: C.sub, marginTop: 6, lineHeight: 18 },
+  ckRow: { flexDirection: 'row', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line },
+  ckBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: C.sub,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  ckBoxOn: { backgroundColor: C.sleepDeep, borderColor: C.sleepDeep },
+  ckMark: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  ckTitle: { fontSize: 15, fontWeight: '700', color: C.text },
+  ckDone: { color: C.sub, textDecorationLine: 'line-through' },
+  ckNow: { fontSize: 12, color: C.danger, fontWeight: '800' },
+  ckSub: { fontSize: 12, color: C.sub, marginTop: 3, lineHeight: 17 },
+  ckFoot: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
+  ckLink: { color: C.sleepDeep, fontWeight: '700', fontSize: 14 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line },
   rowDate: { fontSize: 15, fontWeight: '700', color: C.text },
   rowAge: { fontSize: 12, color: C.sub },
